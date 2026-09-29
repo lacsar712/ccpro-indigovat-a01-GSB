@@ -6,7 +6,7 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
-from app.models import DipLot, User, Vat, Workshop
+from app.models import AlkaliTitration, DipLot, User, Vat, Workshop
 
 _PWD_SALT = os.environ.get("PWD_SALT", "indigovat-dev-salt").encode("utf-8")
 
@@ -137,6 +137,54 @@ def ensure_seed_data(db: Session) -> None:
                 (32, "28.00", "-470.00"),
                 (20, "33.00", "-505.00"),
                 (10, "38.50", "-530.00"),
+            ],
+        )
+    )
+
+    def titrations(vat_id: int, series):
+        """series: (seq, hours_ago, alkalinity, operator)；采集时间须晚于最近浸染。"""
+        rows = []
+        for seq, hours, alkalinity, operator in series:
+            rows.append(
+                AlkaliTitration(
+                    vat_id=vat_id,
+                    seq=seq,
+                    alkalinity=Decimal(alkalinity),
+                    collectedAt=now - timedelta(hours=hours),
+                    operator=operator,
+                )
+            )
+        return rows
+
+    # V-01：只有 2 条滴定——电位虽达标（-520 mV），账不齐仍不能标可染色
+    db.add_all(
+        titrations(
+            v1.id,
+            [
+                (1, 6, "8.80", "吴阿莲"),
+                (2, 3, "9.05", "吴阿莲"),
+            ],
+        )
+    )
+    # V-11：3 条连续合格滴定，但电位仅 -480 mV——电位门槛仍拦住可染色
+    db.add_all(
+        titrations(
+            v3.id,
+            [
+                (1, 9, "9.00", "龙秋生"),
+                (2, 6, "9.25", "龙秋生"),
+                (3, 3, "9.10", "龙秋生"),
+            ],
+        )
+    )
+    # V-12：已是可染色缸，保留一本完整的 3 条滴定账
+    db.add_all(
+        titrations(
+            v4.id,
+            [
+                (1, 8, "9.10", "潘阿花"),
+                (2, 5, "9.30", "潘阿花"),
+                (3, 2, "9.20", "潘阿花"),
             ],
         )
     )

@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}碱剂滴定本{% endblock %}
+{% block content %}
+<div x-data="titrationBook()">
+  <div class="chips" role="toolbar" aria-label="按缸筛选">
+    <a class="chip" :class="{ on: filterVat === null }" href="/titrations">全部缸位</a>
+    <template x-for="v in vats" :key="v.id">
+      <a
+        class="chip"
+        :class="{ on: filterVat === v.id }"
+        :href="'/titrations?vat=' + v.id"
+      >
+        <span x-text="v.code"></span>
+        <span class="chip-sub" x-text="' · ' + v.statusLabel"></span>
+        <span class="chip-count" x-show="v.titrationCount > 0" x-text="v.titrationCount"></span>
+      </a>
+    </template>
+  </div>
+
+  {% if error %}
+  <div class="error-box">{{ error }}</div>
+  {% endif %}
+
+  <div class="panel-grid">
+    <section class="panel">
+      <h2 style="font-size:1.2rem;margin:0 0 0.25rem;color:var(--indigo-deep)">碱剂滴定记录</h2>
+      <p class="hint" x-text="selectedVat ? (selectedVat.code + '（' + selectedVat.statusLabel + '）') : '全部染缸'"></p>
+      <table class="titration-table">
+        <thead>
+          <tr>
+            <th>染缸</th>
+            <th>序号</th>
+            <th>碱度值</th>
+            <th>采集时间</th>
+            <th>当班人</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for e in entries %}
+          <tr>
+            <td>{{ e.vatCode }}</td>
+            <td class="num">#{{ e.seq }}</td>
+            <td class="num">{{ "%.2f"|format(e.alkalinity) }}</td>
+            <td>{{ e.collectedAt }}</td>
+            <td>{{ e.operator }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <p class="hint" style="margin-bottom:0" x-show="entries.length === 0" x-cloak>该缸尚无滴定记录——账不齐不准标可染色。</p>
+    </section>
+
+    <section class="panel">
+      <h2 style="font-size:1.2rem;margin:0 0 0.25rem;color:var(--indigo-deep)">新建滴定登记</h2>
+      <template x-if="selectedVat && canWrite">
+        <p class="hint">向 <strong x-text="selectedVat.code"></strong>（还原中）补一笔碱剂滴定，同缸序号从 1 起、不得重复。</p>
+      </template>
+      <template x-if="selectedVat && !canWrite">
+        <p class="hint">
+          <strong x-text="selectedVat.code"></strong> 当前为 <strong x-text="selectedVat.statusLabel"></strong>：
+          闲置缸与可染色缸禁止建账，仅还原中染缸可写。
+        </p>
+      </template>
+      <template x-if="!selectedVat">
+        <p class="hint">先在上方选择一口还原中的染缸，再登记滴定。</p>
+      </template>
+
+      <form
+        x-show="selectedVat && canWrite"
+        method="post"
+        action="/titrations"
+      >
+        <label>染缸
+          <select name="vat_id" required :value="selectedVat ? selectedVat.id : ''">
+            <template x-for="v in vats" :key="v.id">
+              <option
+                :value="v.id"
+                :disabled="v.status !== 'reducing'"
+                x-text="v.code + '（' + v.statusLabel + '）'"
+              ></option>
+            </template>
+          </select>
+        </label>
+        <label>滴定序号（从 1 起）
+          <input type="number" name="seq" min="1" step="1" required placeholder="例如 1"
+                 value="{{ form.get('seq', '') }}">
+        </label>
+        <label>碱度值（必须为正）
+          <input type="number" name="alkalinity" min="0.01" step="0.01" required placeholder="例如 9.20"
+                 value="{{ form.get('alkalinity', '') }}">
+        </label>
+        <label>采集时间
+          <input type="datetime-local" name="collectedAt" required :value="formCollected || nowLocal()">
+        </label>
+        <label>当班人
+          <input type="text" name="operator" maxlength="80" required placeholder="当班师傅姓名"
+                 value="{{ form.get('operator', '') }}">
+        </label>
+        <button type="submit">写入滴定本</button>
+      </form>
+    </section>
+  </div>
+
+  <p class="rule-foot">
+    设为可染色须同时满足：最新浸染电位 ≤ -500 mV；滴定序号自 1 连续且不少于 3 条，
+    相邻碱度差绝对值 ≤ 0.4，最新采集晚于最近一笔浸染。
+  </p>
+</div>
+
+<script>
+  function titrationBook() {
+    return {
+      vats: {{ vats | tojson }},
+      entries: {{ entries | tojson }},
+      filterVat: {{ filter_vat if filter_vat is not none else 'null' }},
+      selectedVat: {{ selected_vat if selected_vat is not none else 'null' }},
+      canWrite: {{ can_write | tojson if can_write is not none else 'null' }},
+      formCollected: {{ (form.get('collectedAt', '') if form else '') | tojson }},
+      nowLocal() {
+        const d = new Date();
+        d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+        return d.toISOString().slice(0, 16);
+      },
+    };
+  }
+</script>
+{% endblock %}
