@@ -26,6 +26,14 @@ class DipLotIn(BaseModel):
     redoxMv: Optional[Decimal] = None
 
 
+class TitrationIn(BaseModel):
+    vat_id: int
+    seq: int = Field(ge=1)
+    alkalinity: Decimal = Field(gt=0)
+    collectedAt: datetime
+    operator: str = Field(min_length=1, max_length=80)
+
+
 class MessageOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     detail: str

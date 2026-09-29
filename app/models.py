@@ -55,11 +55,19 @@ class Vat(Base):
 
     workshop: Mapped["Workshop"] = relationship(back_populates="vats")
     lots: Mapped[list["DipLot"]] = relationship(back_populates="vat")
+    titrations: Mapped[list["AlkalinityTitration"]] = relationship(
+        back_populates="vat", order_by="AlkalinityTitration.seq"
+    )
 
     def latest_lot(self) -> Optional["DipLot"]:
         if not self.lots:
             return None
         return sorted(self.lots, key=lambda x: (x.dippedAt, x.id), reverse=True)[0]
+
+    def latest_titration(self) -> Optional["AlkalinityTitration"]:
+        if not self.titrations:
+            return None
+        return sorted(self.titrations, key=lambda x: (x.collectedAt, x.id), reverse=True)[0]
 
 
 class DipLot(Base):
@@ -72,3 +80,21 @@ class DipLot(Base):
     redoxMv: Mapped[Optional[Decimal]] = mapped_column(Numeric(8, 2), nullable=True)
 
     vat: Mapped["Vat"] = relationship(back_populates="lots")
+
+
+class AlkalinityTitration(Base):
+    """碱剂滴定本：只给还原中染缸建账，同缸滴定序号从 1 起且不重复。"""
+
+    __tablename__ = "alkalinity_titrations"
+    __table_args__ = (
+        UniqueConstraint("vat_id", "seq", name="uniq_titration_seq_per_vat"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    vat_id: Mapped[int] = mapped_column(ForeignKey("vats.id", ondelete="CASCADE"))
+    seq: Mapped[int] = mapped_column()
+    alkalinity: Mapped[Decimal] = mapped_column(Numeric(8, 3))
+    collectedAt: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    operator: Mapped[str] = mapped_column(String(80))
+
+    vat: Mapped["Vat"] = relationship(back_populates="titrations")

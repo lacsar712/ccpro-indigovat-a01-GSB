@@ -6,7 +6,7 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
-from app.models import DipLot, User, Vat, Workshop
+from app.models import AlkalinityTitration, DipLot, User, Vat, Workshop
 
 _PWD_SALT = os.environ.get("PWD_SALT", "indigovat-dev-salt").encode("utf-8")
 
@@ -139,5 +139,26 @@ def ensure_seed_data(db: Session) -> None:
                 (10, "38.50", "-530.00"),
             ],
         )
+    )
+
+    # V-01 只备 2 条碱剂滴定：电位门槛虽过（-520 mV），
+    # 但滴定不足 3 条，转可染色仍应被拦下。
+    db.add_all(
+        [
+            AlkalinityTitration(
+                vat_id=v1.id,
+                seq=1,
+                alkalinity=Decimal("8.400"),
+                collectedAt=now - timedelta(hours=6),
+                operator="陆阿姐",
+            ),
+            AlkalinityTitration(
+                vat_id=v1.id,
+                seq=2,
+                alkalinity=Decimal("8.700"),
+                collectedAt=now - timedelta(hours=2),
+                operator="陆阿姐",
+            ),
+        ]
     )
     db.commit()

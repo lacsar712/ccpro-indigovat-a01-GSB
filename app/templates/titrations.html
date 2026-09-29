@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block title %}碱剂滴定本{% endblock %}
+{% block content %}
+<div class="chips" role="toolbar" aria-label="按缸筛选滴定本">
+  <a class="chip {% if filter_vat is none %}on{% endif %}" href="/titrations">全部缸位</a>
+  {% for v in vat_cards %}
+  <a class="chip {% if filter_vat == v.id %}on{% endif %}"
+     href="/titrations?vat={{ v.id }}"
+     title="{{ v.workshopName }} · {{ v.statusLabel }}">
+    {{ v.code }} · {{ v.statusLabel }}{% if v.titrations %} · {{ v.titrations|length }} 条{% endif %}
+  </a>
+  {% endfor %}
+</div>
+
+{% if error %}
+<div class="error-box">{{ error }}</div>
+{% endif %}
+
+<div class="panel-grid">
+  <section class="panel">
+    <h2>碱剂滴定本</h2>
+    <p class="hint">
+      按缸筛选查看。滴定序号从 1 起、同缸不重复，碱度必须为正；
+      只有<strong>还原中</strong>的染缸能补本，闲置缸与可染色缸禁止建账。
+    </p>
+
+    {% for v in vat_cards %}
+    {% if filter_vat is none or filter_vat == v.id %}
+    <article class="ledger-card st-{{ v.status }}">
+      <header class="ledger-head">
+        <div>
+          <span class="ledger-code">{{ v.code }}</span>
+          <span class="ledger-meta">{{ v.workshopName }} · {{ v.dyeType }}</span>
+        </div>
+        <div class="status-label">
+          <span class="status-dot"></span>
+          <span>{{ v.statusLabel }}</span>
+        </div>
+      </header>
+      <p class="ledger-sub">最近浸染：{{ v.lastDippedAt or '—' }} · 已签 {{ v.titrations|length }} 条</p>
+      {% if v.titrations %}
+      <table class="ledger-table">
+        <thead>
+          <tr><th>序号</th><th>碱度值</th><th>采集时间</th><th>当班人</th></tr>
+        </thead>
+        <tbody>
+          {% for t in v.titrations %}
+          <tr>
+            <td>{{ t.seq }}</td>
+            <td>{{ t.alkalinity }}</td>
+            <td>{{ t.collectedAt }}</td>
+            <td>{{ t.operator }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="ledger-empty">滴定本为空——账不齐不准标可染色。</p>
+      {% endif %}
+      {% if not v.canWrite %}
+      <p class="ledger-lock">该缸非还原中，禁止新建滴定。</p>
+      {% endif %}
+    </article>
+    {% endif %}
+    {% endfor %}
+  </section>
+
+  <section class="panel">
+    <h2>新建滴定</h2>
+    <p class="hint">
+      仅可选择还原中染缸。转可染色时还须满足：不少于 3 条且序号连续、
+      相邻碱度差 ≤ 0.4、最新采集晚于最近一笔浸染（与电位 ≤ -500 mV 并行）。
+    </p>
+    {% if reducing_vats %}
+    <form method="post" action="/titrations" id="titration-form">
+      <input type="hidden" name="filter_vat" value="{{ filter_vat if filter_vat is not none else '' }}">
+      <label>染缸（仅还原中）
+        <select name="vat_id" id="titration-vat" required>
+          {% for v in reducing_vats %}
+          <option value="{{ v.id }}"
+                  data-next-seq="{{ vat_cards | selectattr('id', 'equalto', v.id) | map(attribute='nextSeq') | first }}"
+                  {% if form.vat_id|default('') == v.id|string or (not form and filter_vat == v.id) %}selected{% endif %}>
+            {{ v.label }}
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>滴定序号（从 1 起，同缸不重复）
+        <input type="number" name="seq" min="1" step="1" required
+               value="{{ form.seq|default('') }}" placeholder="选中缸后自动建议下一号">
+      </label>
+      <label>碱度值（必须为正）
+        <input type="number" name="alkalinity" step="0.001" min="0.001" required
+               value="{{ form.alkalinity|default('') }}" placeholder="例如 8.600">
+      </label>
+      <label>采集时间
+        <input type="datetime-local" name="collectedAt" step="1" required
+               value="{{ form.collectedAt|default('') }}">
+      </label>
+      <label>当班人
+        <input type="text" name="operator" maxlength="80" required
+               value="{{ form.operator|default('') }}" placeholder="例如 陆阿姐">
+      </label>
+      <button type="submit">写入滴定本</button>
+    </form>
+    {% else %}
+    <p class="ledger-lock">当前没有还原中的染缸，暂不可建账。</p>
+    {% endif %}
+  </section>
+</div>
+
+<p class="rule-foot">碱剂滴定在专页建账；缸位条仅显示已签条数角标。碱度差与氧化还原电位两套门槛并行，缺一不可。</p>
+
+<script>
+  (function () {
+    var form = document.getElementById('titration-form');
+    if (!form) return;
+    var vatSelect = document.getElementById('titration-vat');
+    var seqInput = form.querySelector('input[name="seq"]');
+    var collected = form.querySelector('input[name="collectedAt"]');
+    var touched = false;
+    seqInput.addEventListener('input', function () { touched = true; });
+    function suggestSeq() {
+      if (touched) return;
+      var opt = vatSelect.options[vatSelect.selectedIndex];
+      if (opt && opt.dataset.nextSeq) seqInput.value = opt.dataset.nextSeq;
+    }
+    vatSelect.addEventListener('change', suggestSeq);
+    if (!seqInput.value) suggestSeq();
+    if (!collected.value) {
+      var d = new Date();
+      d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+      collected.value = d.toISOString().slice(0, 19);
+    }
+  })();
+</script>
+{% endblock %}

@@ -11,8 +11,12 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.auth import get_current_user
 from app.db import get_db
-from app.models import DipLot, Vat, Workshop
-from app.services.vat_rules import VatRuleError, validate_vat_status_change
+from app.models import AlkalinityTitration, DipLot, Vat, Workshop
+from app.services.vat_rules import (
+    VatRuleError,
+    assert_can_add_titration,
+    validate_vat_status_change,
+)
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
@@ -73,6 +77,7 @@ def _vat_payload(vat: Vat) -> dict:
         "lastRedox": float(latest.redoxMv) if latest and latest.redoxMv is not None else None,
         "lastMeters": float(latest.clothMeters) if latest else None,
         "lastDippedAt": latest.dippedAt.strftime("%Y-%m-%d %H:%M") if latest else None,
+        "titrationCount": len(vat.titrations),
         "spark": _spark_points(chronological),
         "recentLots": [
             {
@@ -98,7 +103,11 @@ def _bay_context(
     workshops = db.query(Workshop).order_by(Workshop.name).all()
     vats = (
         db.query(Vat)
-        .options(joinedload(Vat.workshop), joinedload(Vat.lots))
+        .options(
+            joinedload(Vat.workshop),
+            joinedload(Vat.lots),
+            joinedload(Vat.titrations),
+        )
         .order_by(Vat.code)
         .all()
     )
@@ -141,7 +150,11 @@ async def bay_vat_status(
         return RedirectResponse("/login", status_code=303)
     item = (
         db.query(Vat)
-        .options(joinedload(Vat.workshop), joinedload(Vat.lots))
+        .options(
+            joinedload(Vat.workshop),
+            joinedload(Vat.lots),
+            joinedload(Vat.titrations),
+        )
         .filter(Vat.id == pk)
         .first()
     )
@@ -151,7 +164,7 @@ async def bay_vat_status(
     error = None
     try:
         latest = item.latest_lot()
-        validate_vat_status_change(item, status, latest)
+        validate_vat_status_change(item, status, latest, item.titrations)
         item.status = status
         db.commit()
         return RedirectResponse(f"/?vat={pk}" + (f"&workshop={ws}" if ws else ""), status_code=303)
@@ -201,6 +214,161 @@ async def bay_log_lot(
         request,
         "bay.html",
         _bay_context(request, db, user, ws, pk, error),
+        status_code=400,
+    )
+
+
+def _titrations_context(
+    request: Request,
+    db: Session,
+    user,
+    vat_id: Optional[int] = None,
+    form: Optional[dict] = None,
+    error: Optional[str] = None,
+):
+    vats = (
+        db.query(Vat)
+        .options(
+            joinedload(Vat.workshop),
+            joinedload(Vat.titrations),
+            joinedload(Vat.lots),
+        )
+        .order_by(Vat.code)
+        .all()
+    )
+    vat_cards = []
+    for v in vats:
+        titrations = sorted(v.titrations, key=lambda t: (t.seq, t.id))
+        latest_lot = v.latest_lot()
+        vat_cards.append(
+            {
+                "id": v.id,
+                "code": v.code,
+                "dyeType": v.dyeType,
+                "workshopName": v.workshop.name if v.workshop else "",
+                "status": v.status,
+                "statusLabel": STATUS_LABELS.get(v.status, v.status),
+                "canWrite": v.status == Vat.STATUS_REDUCING,
+                "nextSeq": (max((t.seq for t in titrations), default=0) + 1),
+                "lastDippedAt": latest_lot.dippedAt.strftime("%Y-%m-%d %H:%M")
+                if latest_lot
+                else None,
+                "titrations": [
+                    {
+                        "id": t.id,
+                        "seq": t.seq,
+                        "alkalinity": f"{Decimal(t.alkalinity):.3f}",
+                        "collectedAt": t.collectedAt.strftime("%Y-%m-%d %H:%M"),
+                        "operator": t.operator,
+                    }
+                    for t in titrations
+                ],
+            }
+        )
+    reducing_vats = [
+        {"id": c["id"], "code": c["code"], "label": f'{c["code"]}（{c["workshopName"]}）'}
+        for c in vat_cards
+        if c["canWrite"]
+    ]
+    return {
+        "request": request,
+        "user": user,
+        "vat_cards": vat_cards,
+        "reducing_vats": reducing_vats,
+        "filter_vat": vat_id,
+        "form": form or {},
+        "error": error,
+        "active": "titrations",
+    }
+
+
+@router.get("/titrations", response_class=HTMLResponse)
+async def titrations_page(
+    request: Request,
+    vat: Optional[int] = None,
+    db: Session = Depends(get_db),
+):
+    user = _need_login(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    return render(request, "titrations.html", _titrations_context(request, db, user, vat))
+
+
+@router.post("/titrations", response_class=HTMLResponse)
+async def create_titration(
+    request: Request,
+    vat_id: str = Form(...),
+    seq: str = Form(...),
+    alkalinity: str = Form(...),
+    collectedAt: str = Form(...),
+    operator: str = Form(...),
+    filter_vat: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    user = _need_login(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    fv = int(filter_vat) if filter_vat.strip() else None
+    form = {
+        "vat_id": vat_id,
+        "seq": seq,
+        "alkalinity": alkalinity,
+        "collectedAt": collectedAt,
+        "operator": operator,
+    }
+    item = None
+    try:
+        item = (
+            db.query(Vat)
+            .options(joinedload(Vat.titrations))
+            .filter(Vat.id == int(vat_id))
+            .first()
+        )
+    except ValueError:
+        pass
+    if not item:
+        return render(
+            request,
+            "titrations.html",
+            _titrations_context(request, db, user, fv, form, "染缸不存在。"),
+            status_code=400,
+        )
+    try:
+        seq_val = int(seq)
+        alk_val = Decimal(alkalinity)
+        collected = datetime.fromisoformat(collectedAt)
+        operator_val = operator.strip()
+        if not operator_val:
+            raise ValueError("当班人不能为空")
+        assert_can_add_titration(
+            item,
+            seq_val,
+            alk_val,
+            [t.seq for t in item.titrations],
+        )
+        db.add(
+            AlkalinityTitration(
+                vat_id=item.id,
+                seq=seq_val,
+                alkalinity=alk_val,
+                collectedAt=collected,
+                operator=operator_val,
+            )
+        )
+        db.commit()
+        return RedirectResponse(
+            f"/titrations?vat={item.id}", status_code=303
+        )
+    except (ValueError, InvalidOperation) as exc:
+        error = f"滴定记录无效：{exc}"
+        db.rollback()
+    except VatRuleError as exc:
+        error = exc.message
+        db.rollback()
+    return render(
+        request,
+        "titrations.html",
+        _titrations_context(request, db, user, fv, form, error),
         status_code=400,
     )
 

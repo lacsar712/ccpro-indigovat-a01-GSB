@@ -35,11 +35,20 @@ docker compose up --build -d
 
 ## 交互（信息架构）
 
-1. **染缸还原台**：横滑缸位条，每缸显示状态、最近电位与 redox sparkline
-2. **工坊 chip**：仅作缸位筛选，无独立工坊 CRUD 页
-3. **点缸展开**：同页内登记浸染批次、改状态、看近几笔；无平行「染缸表 / 批次表」
+1. **顶栏两个入口**：**还原台**（`/`）与**碱剂滴定**（`/titrations`），均可点
+2. **染缸还原台**：横滑缸位条，每缸显示状态、最近电位、redox sparkline 与「碱 N」已签条数角标
+3. **工坊 chip**：仅作缸位筛选，无独立工坊 CRUD 页
+4. **点缸展开**：同页内登记浸染批次、改状态、看近几笔；展开区内**不放**滴定建账表单
+5. **碱剂滴定专页**：按缸筛选滴定本列表 + 新建表单（染缸 / 滴定序号 / 碱度值 / 采集时间 / 当班人）
 
-**业务规则**：状态改为 `ready`（可染色）时，最新批次 `redoxMv` 须已填且 ≤ -500（见 `vat_rules.py`）。
+**建账规则**：只有 `reducing`（还原中）染缸能写碱剂滴定本；闲置缸与可染色缸禁止建账。同缸内滴定序号从 1 起且不得重复，碱度必须为正。
+
+**可染色双门槛（并行，缺一不可，共用同一判定函数 `validate_vat_status_change`）**：
+
+1. **氧化还原电位门槛（原有）**：最新浸染批次 `redoxMv` 存在且 ≤ **-500 mV**；
+2. **碱度门槛**：该缸滴定序号从 1 起**连续且不少于 3 条**，**相邻碱度差绝对值 ≤ 0.4**，且**最新采集时间晚于该缸最近一笔浸染**。
+
+空账（含只有 2 条滴定的种子缸 V-01）一律不得改为可染色。规则见 `app/services/vat_rules.py`。
 
 ## 本地开发（可选）
 
@@ -57,6 +66,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 4720 --reload
 1. **Workshop**：`name`、`region`、`notes`（UI 上仅为筛选片）
 2. **Vat**：归属工坊、`code`、`dyeType`、`volumeL`、状态 `idle|reducing|ready`
 3. **DipLot**：归属染缸、`dippedAt`、`clothMeters`、`redoxMv`（可空）
+4. **AlkalinityTitration（碱剂滴定本）**：归属染缸、`seq`（同缸唯一，从 1 起）、`alkalinity`（正数）、`collectedAt`、`operator`；仅还原中可建账
 
 ## 目录结构
 
@@ -75,5 +85,5 @@ IndigoVat-01/
     seed.py
     routers/
     services/vat_rules.py
-    templates/   # base / bay / login
+    templates/   # base / bay / titrations / login
 ```
